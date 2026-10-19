@@ -90,6 +90,7 @@ button.primary{background:var(--gold);color:var(--on-gold);border-color:var(--go
         <button id="mCpu" aria-pressed="true">vs CPU</button>
         <button id="mPvp" aria-pressed="false">2 players</button>
         <button id="mPrac" aria-pressed="false">Practice</button>
+        <button id="mPens" aria-pressed="false">Penalties</button>
       </div>
       <button id="newBtn">New match</button>
       <button id="snd" aria-pressed="true">Sound on</button>
@@ -581,6 +582,8 @@ function newMatch() {
   setupTeam = 'red'; phase = 'setup'; camOff = 0; aim = cpu = drag = pan = null;
   practiceShots = 0; resetBoards();
   if (mode === 'practice') { world.obs = layout('blue'); startAttack('red', true); return; }
+  // Penalty practice: straight into an endless shootout against the Blues' keeper
+  if (mode === 'pens') { startShootout(true); return; }
   ui();
 }
 function setupDone() {
@@ -692,8 +695,8 @@ function spinWheel() {
 }
 
 // ================= penalty shootout =================
-function startShootout() {
-  so = { kicks: { red: [], blue: [] }, turn: 'red', stage: 'ready', t: 0, ball: 'normal', cycleIdx: 0, marker: 0.5, mdir: 1, acc: 0, res: null, kp: { x: 0, tilt: 0, spin: 0 }, bt: 0 };
+function startShootout(practice = false) {
+  so = { practice, kicks: { red: [], blue: [] }, turn: 'red', stage: 'ready', t: 0, ball: 'normal', cycleIdx: 0, marker: 0.5, mdir: 1, acc: 0, res: null, kp: { x: 0, tilt: 0, spin: 0 }, bt: 0 };
   phase = 'shootout'; particles = []; popups = []; sfx.whistle();
   soAuto(); ui();
 }
@@ -735,6 +738,7 @@ function soFinish() {
   ui();
 }
 function soNext() {
+  if (so.practice) { so.stage = 'ready'; so.t = 0; so.res = null; so.ball = 'normal'; ui(); return; }
   const k = so.kicks, gr = k.red.filter(Boolean).length, gb = k.blue.filter(Boolean).length, nr = k.red.length, nb = k.blue.length, R = CFG.penalties.rounds;
   let done = false;
   if (nr <= R && nb <= R) { if (gr + (R - nr) < gb || gb + (R - nb) < gr) done = true; if (nr === R && nb === R && gr !== gb) done = true; }
@@ -1013,6 +1017,7 @@ $('newBtn').onclick = () => { ensureAudio(); newMatch(); };
 $('mCpu').onclick = () => { if (mode !== 'cpu') { mode = 'cpu'; newMatch(); } };
 $('mPvp').onclick = () => { if (mode !== 'pvp') { mode = 'pvp'; newMatch(); } };
 $('mPrac').onclick = () => { if (mode !== 'practice') { mode = 'practice'; newMatch(); } };
+$('mPens').onclick = () => { if (mode !== 'pens') { mode = 'pens'; newMatch(); } };
 $('snd').onclick = () => { soundOn = !soundOn; if (soundOn) ensureAudio(); if (master) master.gain.value = soundOn ? 0.9 : 0; $('snd').textContent = soundOn ? 'Sound on' : 'Sound off'; $('snd').setAttribute('aria-pressed', soundOn); };
 
 // ================= UI =================
@@ -1021,13 +1026,13 @@ const chip = (type, next) => { const B = CFG.balls[type]; return `<span class="c
 function ui() {
   $('sRed').textContent = score.red; $('sBlue').textContent = score.blue;
   for (const t of ['red', 'blue']) $(t === 'red' ? 'lRed' : 'lBlue').textContent = `${world.obs.filter(o => o.team === t).length} defenders`;
-  $('mCpu').setAttribute('aria-pressed', mode === 'cpu'); $('mPvp').setAttribute('aria-pressed', mode === 'pvp'); $('mPrac').setAttribute('aria-pressed', mode === 'practice');
-  $('newBtn').textContent = mode === 'practice' ? 'Restart' : 'New match';
+  $('mCpu').setAttribute('aria-pressed', mode === 'cpu'); $('mPvp').setAttribute('aria-pressed', mode === 'pvp'); $('mPrac').setAttribute('aria-pressed', mode === 'practice'); $('mPens').setAttribute('aria-pressed', mode === 'pens');
+  $('newBtn').textContent = mode === 'practice' || mode === 'pens' ? 'Restart' : 'New match';
   $('go').hidden = $('shuffle').hidden = phase !== 'setup';
   $('go').textContent = mode === 'pvp' && setupTeam === 'red' ? 'Lock in Reds' : 'Kick off';
   $('newBtn').classList.toggle('primary', phase === 'over');
   const n = Math.max(attackNo.red, attackNo.blue, 1);
-  $('roundLbl').firstChild.textContent = mode === 'practice' ? 'Practice' : phase === 'shootout' ? 'Penalty shootout' : `Attack ${Math.min(n, ATTACKS)} of ${ATTACKS}`;
+  $('roundLbl').firstChild.textContent = mode === 'practice' ? 'Practice' : mode === 'pens' ? 'Penalty practice' : phase === 'shootout' ? 'Penalty shootout' : `Attack ${Math.min(n, ATTACKS)} of ${ATTACKS}`;
   $('turnLbl').textContent = { setup: 'Set up', over: 'Full time', goal: goalInfo?.foul ? 'Foul!' : 'Goal!', wheel: 'Prize wheel', shootout: so ? `${TEAM[so.turn].name} to shoot` : '' }[phase] || `${TEAM[attacker].name} attack`;
 
   // overlay button: prize wheel and penalty steps
@@ -1053,8 +1058,9 @@ function ui() {
   else if (phase === 'wheel') m = wheel?.done ? `${tag(wheel.team)} win the ${CFG.balls[wheel.prize].label} ball! It's loaded for their next shot.` : `Challenge complete! ${isCpu(wheel.team) ? `${tag(wheel.team)} spin the wheel…` : 'Press SPIN to win a special ball.'}`;
   else if (phase === 'shootout' && so) {
     const B = CFG.balls[so.ball], who = tag(so.turn);
-    m = { ready: `Penalties! ${who}: randomise your ball.`, cycling: `${who}: picking a ball…`, accuracy: `${who}: ${B.label} ball. Stop the marker in the middle.`,
-      aimed: `${who}: ${Math.round(so.acc * 100)}% accuracy. Shoot!`, shot: `${who} shoot…`, result: so.res ? { goal: `Scored by the ${TEAM[so.turn].name}!`, save: 'Saved!', post: 'Off the post!', wide: 'Wide!' }[so.res.res] : '' }[so.stage] || '';
+    const tally = so.practice ? ` You've scored ${so.kicks.red.filter(Boolean).length} of ${so.kicks.red.length}.` : '';
+    m = { ready: `${so.practice ? 'Penalty practice!' : 'Penalties!'} ${who}: randomise your ball.${tally}`, cycling: `${who}: picking a ball…`, accuracy: `${who}: ${B.label} ball. Stop the marker in the middle.`,
+      aimed: `${who}: ${Math.round(so.acc * 100)}% accuracy. Shoot!`, shot: `${who} shoot…`, result: so.res ? { goal: `Scored by the ${TEAM[so.turn].name}!`, save: 'Saved!', post: 'Off the post!', wide: 'Wide!' }[so.res.res] + tally : '' }[so.stage] || '';
   }
   else if (phase === 'goal' && goalInfo.foul) m = mode === 'practice' ? 'Foul! Shots must bounce off something before going in. Try again from the same spot.' : `Foul! Shots must bounce off something before going in. No goal, over to ${tag(goalInfo.scorer)}.`;
   else if (phase === 'goal') m = goalInfo.own ? `Own goal! A point for ${tag(goalInfo.scorer)}.` : `Goal for ${tag(goalInfo.scorer)}!`;
@@ -1572,10 +1578,10 @@ function drawShootout(now) {
   // scoreboard
   const sbw = Math.min(Wd - 24, 420), sbx = Wd / 2 - sbw / 2, sby = 10;
   ctx.fillStyle = 'rgba(10,13,16,0.85)'; ctx.fillRect(sbx, sby, sbw, 64); ctx.strokeStyle = '#2c343d'; ctx.strokeRect(sbx, sby, sbw, 64);
-  ['red', 'blue'].forEach((t, row) => {
-    const y = sby + 20 + row * 26, ks = so.kicks[t], show = Math.max(CFG.penalties.rounds, ks.length + (so.turn === t ? 1 : 0)), from = Math.max(0, show - 7);
+  (so.practice ? ['red'] : ['red', 'blue']).forEach((t, row) => {
+    const y = sby + (so.practice ? 33 : 20 + row * 26), ks = so.kicks[t], show = Math.max(CFG.penalties.rounds, ks.length + (so.turn === t ? 1 : 0)), from = Math.max(0, show - 7);
     ctx.fillStyle = TEAM[t].c; ctx.font = '700 16px "Barlow Condensed", sans-serif'; ctx.textAlign = 'left'; ctx.fillText(TEAM[t].name.toUpperCase(), sbx + 10, y);
-    ctx.fillStyle = '#eef2f5'; ctx.font = '600 24px Teko, sans-serif'; ctx.textAlign = 'right'; ctx.fillText(ks.filter(Boolean).length, sbx + sbw - 10, y + 2);
+    ctx.fillStyle = '#eef2f5'; ctx.font = '600 24px Teko, sans-serif'; ctx.textAlign = 'right'; ctx.fillText(so.practice ? `${ks.filter(Boolean).length}/${ks.length}` : ks.filter(Boolean).length, sbx + sbw - 10, y + 2);
     for (let i = from; i < show; i++) {
       const cx = sbx + 78 + (i - from) * 30;
       if (i < ks.length) { ctx.fillStyle = ks[i] ? '#7dffb0' : '#ff4a3a'; circle(cx, y, 9); ctx.strokeStyle = '#101418'; ctx.lineWidth = 2.5; ctx.beginPath(); if (ks[i]) { ctx.moveTo(cx - 4, y); ctx.lineTo(cx - 1, y + 3); ctx.lineTo(cx + 4, y - 3); } else { ctx.moveTo(cx - 3, y - 3); ctx.lineTo(cx + 3, y + 3); ctx.moveTo(cx + 3, y - 3); ctx.lineTo(cx - 3, y + 3); } ctx.stroke(); }
